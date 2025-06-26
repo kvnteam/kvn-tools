@@ -307,6 +307,41 @@
     div.append(create('h3', {}, 'Enter Access Code:'), input, btn, random, message);
   }
 
+  // --- Tools UI ---
+  function renderToolsUI(){
+    const div = root.querySelector('[data-content="tools"]');
+    div.innerHTML = '';
+
+    const tools = [
+      {name:'Clipboard Logger', desc:'Basic clipboard history', premium:false},
+      {name:'Link Vault', desc:'Save links across tabs', premium:false},
+      {name:'Secure Notes', desc:'Simple locked note pad', premium:false},
+      {name:'DNS Cloak', desc:'Hide DNS activity', premium:true},
+      {name:'Macro Typer', desc:'Type stored responses', premium:true},
+    ];
+
+    div.append(create('h2', {}, 'Tools'));
+
+    tools.forEach(t=>{
+      const locked = t.premium && accessLevel !== "premium";
+      const card = create('div', {style:{marginBottom:'10px', padding:'10px', background:locked?'#3a1f1f':'#2c2c2c', borderRadius:'6px'}},
+        create('h3', {}, t.name),
+        create('p', {}, t.desc),
+        locked ? create('p', {className:'locked'}, '🔒 Premium') : ''
+      );
+      div.appendChild(card);
+    });
+
+    // Reset option
+    const resetBtn = create('button', {}, '🗑️ Reset Session & History');
+    resetBtn.onclick = () => {
+      localStorage.removeItem('kvnAccessCode');
+      localStorage.removeItem('kvnSessionId');
+      location.reload();
+    };
+    div.append(resetBtn);
+  }
+
   // --- Plugins UI ---
   function renderPluginsUI(){
     const div = root.querySelector('[data-content="plugins"]');
@@ -359,87 +394,8 @@
     div.append(create('h2', {}, 'Settings'), label);
   }
 
-  // --- Tools UI ---
-  function renderToolsUI(){
-    const div = root.querySelector('[data-content="tools"]');
-    div.innerHTML = '';
-
-    const tools = [
-      {name:'Clipboard Logger', desc:'Basic clipboard history', premium:false},
-      {name:'Link Vault', desc:'Save links across tabs', premium:false},
-      {name:'Secure Notes', desc:'Simple locked note pad', premium:false},
-      {name:'DNS Cloak', desc:'Hide DNS activity', premium:true},
-      {name:'Macro Typer', desc:'Type stored responses', premium:true},
-    ];
-
-    div.append(create('h2', {}, 'Tools'));
-
-    tools.forEach(t=>{
-      const locked = t.premium && accessLevel !== "premium";
-      const card = create('div', {style:{marginBottom:'10px', padding:'10px', background:locked?'#3a1f1f':'#2c2c2c', borderRadius:'6px'}},
-        create('h3', {}, t.name),
-        create('p', {}, t.desc),
-        locked ? create('p', {className:'locked'}, '🔒 Premium') : ''
-      );
-      div.appendChild(card);
-    });
-
-    // Reset option
-    const resetBtn = create('button', {}, '🗑️ Reset Session & History');
-    resetBtn.onclick = () => {
-      localStorage.removeItem('kvnAccessCode');
-      localStorage.removeItem('kvnSessionId');
-      location.reload();
-    };
-    div.append(resetBtn);
-  }
-
-  // --- GOGUARDIAN LIMITER ---
-  // Place this logic at the TOP of main() (before any UI draws)
-  async function goguardianLimiterCheck() {
-    if (
-      pluginsUnlocked['goguardian-limiter'] &&
-      pluginsUnlocked['goguardian-limiter'].enabled
-    ) {
-      // Replace this detection logic with your own if you want
-      const isGoGuardianDetected = !!window.GoGuardian || navigator.userAgent.toLowerCase().includes('goguardian');
-
-      if (isGoGuardianDetected) {
-        const overlay = create('div', {
-          style: {
-            position: 'fixed',
-            top: '0', left: '0', right: '0', bottom: '0',
-            backgroundColor: 'rgba(0,0,0,0.95)',
-            color: '#fff',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center',
-            alignItems: 'center',
-            fontSize: '24px',
-            zIndex: 10000000,
-            textAlign: 'center',
-            padding: '20px',
-            userSelect: 'none'
-          }
-        }, 
-          create('h1', {}, 'GoGuardian Detected!'),
-          create('p', {}, 'Browsing is restricted due to GoGuardian monitoring.'),
-          create('p', {}, 'Please contact your administrator or disable GoGuardian.')
-        );
-
-        document.body.appendChild(overlay);
-
-        return true; // Stop app UI from loading further
-      }
-    }
-    return false;
-  }
-
   // --- Main Init ---
   async function main(){
-    // GOGUARDIAN LIMITER plugin logic runs first!
-    if (await goguardianLimiterCheck()) return;
-
     const userAgent = navigator.userAgent;
     const banData = await checkBan(sessionId);
     if(banData){ await showBanScreen(banData); return; }
