@@ -1,5 +1,4 @@
 (async()=>{
-
   // -- Firebase SDK via CDN (load dynamically) --
   if(!window.firebase){
     await new Promise(res=>{
@@ -15,7 +14,7 @@
     });
   }
 
-  // -------- CONFIGURATION: FILL THESE IN! --------
+  // -------- CONFIGURATION --------
   const firebaseConfig = {
     apiKey: "AIzaSyCXwHrbRRYwcpecxOjOOczmzm78Im4m4Pc",
     authDomain: "kvn-tools.firebaseapp.com",
@@ -25,16 +24,60 @@
     messagingSenderId: "790872924728",
     appId: "1:790872924728:web:8e2feab5882a3b717a7ccd"
   };
-
   const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1387577192564789309/pkPmG8DNjABABhyBEJUfYBMqhwy2afSgCvEdu5Kt4yHgA5R9rIWDqgcMbfgA4M5JDLlz";
 
-  // Initialize Firebase
   if(!firebase.apps.length){
     firebase.initializeApp(firebaseConfig);
   }
   const db = firebase.database();
 
-  // Utilities
+  // Reset ALL local storage to create fresh session
+  localStorage.removeItem("kvnAccessCode");
+  localStorage.removeItem("kvnSessionId");
+
+  // Generate unique ID and random code
+  const generateSessionId = () => 'sess-' + Math.random().toString(36).substring(2, 10) + '-' + Date.now();
+  const generateAccessCode = () => 'kvn-' + Math.random().toString(36).substring(2, 7);
+
+  let sessionId = generateSessionId();
+  let accessCode = generateAccessCode();
+
+  localStorage.setItem("kvnSessionId", sessionId);
+  localStorage.setItem("kvnAccessCode", accessCode);
+
+  await db.ref(`accessCodes/${accessCode}`).set({ type: "free" });
+
+  // Save session info to Firebase
+  await db.ref(`sessions/${sessionId}`).set({
+    accessCode,
+    userAgent: navigator.userAgent,
+    lastActive: Date.now()
+  });
+
+  // Webhook alert
+  try {
+    await fetch(DISCORD_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: "KVN Tools",
+        embeds: [{
+          title: "New Session Started",
+          color: 3447003,
+          fields: [
+            { name: "Access Code", value: accessCode, inline: true },
+            { name: "Session ID", value: sessionId, inline: true },
+            { name: "User Agent", value: navigator.userAgent, inline: false },
+            { name: "Timestamp", value: new Date().toLocaleString(), inline: false }
+          ]
+        }]
+      })
+    });
+  } catch(e){
+    console.warn("Webhook failed", e);
+  }
+
+  // --- Utilities ---
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const create = (tag, attrs = {}, ...children) => {
     const el = document.createElement(tag);
@@ -56,20 +99,9 @@
     return el;
   };
 
-  // Generate or load sessionId
-  function generateSessionId() {
-    return 'sess-' + Math.random().toString(36).substring(2, 10) + '-' + Date.now();
-  }
-
-  let sessionId = localStorage.getItem('kvnSessionId');
-  if(!sessionId){
-    sessionId = generateSessionId();
-    localStorage.setItem('kvnSessionId', sessionId);
-  }
-
-  // Ban check
-  async function checkBan(sessionId){
-    const snap = await db.ref(`bans/${sessionId}`).once('value');
+  // Plugin code check
+  async function checkPluginCode(code){
+    const snap = await db.ref(`plugins/${code}`).once('value');
     return snap.exists() ? snap.val() : null;
   }
 
@@ -79,13 +111,136 @@
     return snap.exists() ? snap.val() : null;
   }
 
-  // Plugin code check
-  async function checkPluginCode(code){
-    const snap = await db.ref(`plugins/${code}`).once('value');
+  // Ban check
+  async function checkBan(sessionId){
+    const snap = await db.ref(`bans/${sessionId}`).once('value');
     return snap.exists() ? snap.val() : null;
   }
 
-  // Send session info to Discord webhook
+  // --- Style & UI Setup ---
+  const styleTag = create('style', {}, `
+    @import url('https://fonts.googleapis.com/css2?family=SF+Pro+Text&display=swap');
+    *{box-sizing:border-box;}
+    body,html{margin:0;padding:0;overflow:hidden;font-family:'SF Pro Text',sans-serif;}
+    #kvn-window {
+      position: fixed; top: 10vh; left: 50%; transform: translateX(-50%);
+      width: 600px; max-width: 90vw; height: 400px;
+      background: var(--bg); border-radius: 12px;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+      display: flex; flex-direction: column;
+      color: var(--text); user-select: none;
+      animation: fadeInScale 0.3s ease forwards;
+      z-index: 999999999;
+    }
+    :root {
+      --bg: #1e1e1e; --text: #e0e0e0;
+      --btn-close: #ff5f56; --btn-min: #ffbd2e; --btn-max: #27c93f;
+      --tab-active-bg: #2c2c2c; --tab-inactive-bg: transparent;
+      --tab-hover-bg: #333;
+    }
+    [data-theme="light"] {
+      --bg: #f9f9f9; --text: #111;
+      --tab-active-bg: #ddd; --tab-hover-bg: #eee;
+    }
+    @keyframes fadeInScale {
+      0%{opacity:0; transform: translateX(-50%) scale(0.85);}
+      100%{opacity:1; transform: translateX(-50%) scale(1);}
+    }
+    #kvn-window-header {
+      height: 28px; background: var(--bg); border-bottom: 1px solid #555;
+      display: flex; align-items: center; padding: 0 10px; cursor: grab;
+    }
+    #kvn-window-header .btn {
+      width: 12px; height: 12px; border-radius: 50%;
+      margin-right: 8px; flex-shrink: 0; cursor: pointer;
+    }
+    #btn-close { background: var(--btn-close); }
+    #btn-min, #btn-max { opacity:0.3; cursor:not-allowed; }
+    #kvn-tabs { display: flex; border-bottom: 1px solid #555; background: var(--bg); }
+    #kvn-tabs button {
+      flex: 1; padding: 10px 0; background: var(--tab-inactive-bg);
+      border: none; color: var(--text); cursor: pointer;
+      font-weight: 600; transition: background 0.2s;
+    }
+    #kvn-tabs button:hover:not(.active) {
+      background: var(--tab-hover-bg);
+    }
+    #kvn-tabs button.active {
+      border-bottom: 2px solid #5865F2; background: var(--tab-active-bg);
+    }
+    #kvn-content {
+      flex: 1; overflow-y: auto; padding: 15px; background: var(--bg);
+    }
+    input, button, textarea {
+      font-family: inherit; font-size: 14px;
+    }
+    input[type="text"], textarea {
+      width: 100%; padding: 8px 10px; margin: 8px 0;
+      border-radius: 6px; border: 1px solid #555;
+      background: var(--bg); color: var(--text); outline: none;
+    }
+    button {
+      background: #5865F2; color: white; border: none;
+      padding: 10px 16px; border-radius: 6px; cursor: pointer;
+    }
+    button:hover { background: #4752c4; }
+    .locked { color: #ff4c4c; }
+  `);
+  document.head.appendChild(styleTag);
+
+  // Main Window
+  const root = create('div', {id: 'kvn-window', 'data-theme': 'dark'});
+  root.innerHTML = `
+    <div id="kvn-window-header">
+      <div id="btn-close" class="btn" title="Close"></div>
+      <div id="btn-min" class="btn" title="Minimize"></div>
+      <div id="btn-max" class="btn" title="Maximize"></div>
+    </div>
+    <div id="kvn-tabs">
+      <button data-tab="tools" class="active">Tools</button>
+      <button data-tab="plugins">Plugins</button>
+      <button data-tab="settings">Settings</button>
+    </div>
+    <div id="kvn-content">
+      <div data-content="tools"></div>
+      <div data-content="plugins" style="display:none;"></div>
+      <div data-content="settings" style="display:none;"></div>
+    </div>
+  `;
+  document.body.appendChild(root);
+
+  // Tab Switching
+  const tabs = root.querySelectorAll('#kvn-tabs button');
+  const contents = root.querySelectorAll('#kvn-content > div');
+  tabs.forEach(tab => {
+    tab.onclick = () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      contents.forEach(c => c.style.display='none');
+      tab.classList.add('active');
+      root.querySelector(`[data-content="${tab.dataset.tab}"]`).style.display = 'block';
+    };
+  });
+
+  // Close button
+  document.getElementById('btn-close').onclick = () => {
+    root.remove();
+  };
+
+  // --- State ---
+  accessCode = localStorage.getItem('kvnAccessCode') || "";
+  let accessLevel = "none"; // "none", "free", "premium"
+  let pluginsUnlocked = {};
+
+  // --- Session Tracking ---
+  async function updateSession(){
+    const userAgent = navigator.userAgent;
+    await db.ref(`sessions/${sessionId}`).set({
+      lastActive: Date.now(),
+      userAgent,
+      accessCode: accessCode || null
+    });
+  }
+
   async function sendSessionToDiscord(sessionId, userAgent, accessCode){
     const payload = {
       username: "KVN Tools Sessions",
@@ -107,468 +262,182 @@
         body: JSON.stringify(payload)
       });
     } catch(e){
-      console.warn("Failed to send webhook", e);
+      console.warn("Webhook failed:", e);
     }
   }
 
-  // --- Style: macOS window + animations (dark/light mode toggle) ---
-  const styleContent = `
-  @import url('https://fonts.googleapis.com/css2?family=SF+Pro+Text&display=swap');
-  *{box-sizing:border-box;}
-  body,html{margin:0;padding:0;overflow:hidden;font-family:'SF Pro Text',-apple-system, BlinkMacSystemFont, sans-serif;}
-  #kvn-window {
-    position: fixed;
-    top: 10vh; left: 50%; transform: translateX(-50%);
-    width: 600px; max-width: 90vw; height: 400px; background: var(--bg);
-    border-radius: 12px; box-shadow: 0 20px 50px rgba(0,0,0,0.25);
-    display: flex; flex-direction: column;
-    color: var(--text);
-    user-select: none;
-    animation: fadeInScale 0.3s ease forwards;
-    z-index: 999999999;
-  }
-  :root {
-    --bg: #1e1e1e;
-    --text: #e0e0e0;
-    --btn-close: #ff5f56;
-    --btn-min: #ffbd2e;
-    --btn-max: #27c93f;
-    --tab-active-bg: #2c2c2c;
-    --tab-inactive-bg: transparent;
-    --tab-hover-bg: #333;
-  }
-  [data-theme="light"] {
-    --bg: #f9f9f9;
-    --text: #111;
-    --btn-close: #ff5f56;
-    --btn-min: #ffbd2e;
-    --btn-max: #27c93f;
-    --tab-active-bg: #ddd;
-    --tab-inactive-bg: transparent;
-    --tab-hover-bg: #eee;
-  }
-  @keyframes fadeInScale {
-    0%{opacity:0; transform: translateX(-50%) scale(0.85);}
-    100%{opacity:1; transform: translateX(-50%) scale(1);}
-  }
-  #kvn-window-header {
-    height: 28px; background: var(--bg); border-bottom: 1px solid #555;
-    display: flex; align-items: center; padding: 0 10px;
-    user-select:none;
-    cursor: grab;
-  }
-  #kvn-window-header .btn {
-    width: 12px; height: 12px; border-radius: 50%;
-    margin-right: 8px;
-    flex-shrink: 0;
-    cursor: pointer;
-  }
-  #btn-close { background: var(--btn-close); }
-  #btn-min { background: var(--btn-min); opacity:0.3; cursor:not-allowed; }
-  #btn-max { background: var(--btn-max); opacity:0.3; cursor:not-allowed; }
-  #kvn-tabs {
-    display: flex;
-    border-bottom: 1px solid #555;
-    background: var(--bg);
-  }
-  #kvn-tabs button {
-    flex: 1;
-    padding: 10px 0;
-    background: var(--tab-inactive-bg);
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: var(--text);
-    cursor: pointer;
-    font-weight: 600;
-    transition: background 0.2s, border-color 0.2s;
-  }
-  #kvn-tabs button:hover:not(.active) {
-    background: var(--tab-hover-bg);
-  }
-  #kvn-tabs button.active {
-    border-bottom: 2px solid #5865F2;
-    background: var(--tab-active-bg);
-  }
-  #kvn-content {
-    flex: 1;
-    overflow-y: auto;
-    padding: 15px;
-    background: var(--bg);
-  }
-  input, button, textarea {
-    font-family: inherit;
-    font-size: 14px;
-  }
-  input[type="text"], input[type="password"], textarea {
-    width: 100%;
-    padding: 8px 10px;
-    margin: 8px 0;
-    border-radius: 6px;
-    border: 1px solid #555;
-    background: var(--bg);
-    color: var(--text);
-    outline: none;
-  }
-  button {
-    background: #5865F2;
-    color: white;
-    border: none;
-    padding: 10px 16px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: background 0.3s ease;
-  }
-  button:hover {
-    background: #4752c4;
-  }
-  .message {
-    margin: 10px 0;
-    font-weight: 600;
-  }
-  .locked {
-    color: #ff4c4c;
-  }
-  `;
-
-  const styleTag = create('style', {}, styleContent);
-  document.head.appendChild(styleTag);
-
-  // --- Window HTML ---
-  const root = create('div', {id: 'kvn-window', 'data-theme': 'dark'});
-  document.body.appendChild(root);
-
-  root.innerHTML = `
-    <div id="kvn-window-header">
-      <div id="btn-close" class="btn" title="Close"></div>
-      <div id="btn-min" class="btn" title="Minimize"></div>
-      <div id="btn-max" class="btn" title="Maximize"></div>
-    </div>
-    <div id="kvn-tabs">
-      <button data-tab="tools" class="active">Tools</button>
-      <button data-tab="plugins">Plugins</button>
-      <button data-tab="settings">Settings</button>
-    </div>
-    <div id="kvn-content">
-      <div data-content="tools"></div>
-      <div data-content="plugins" style="display:none;"></div>
-      <div data-content="settings" style="display:none;"></div>
-    </div>
-  `;
-
-  // Close button works
-  document.getElementById('btn-close').onclick = () => {
-    root.remove();
-    window.kvnToolsLoaded = false;
-  };
-
-  // Disable min and max buttons
-  // They have opacity 0.3 and no cursor pointer set already
-
-  // Tab switching logic
-  const tabs = root.querySelectorAll('#kvn-tabs button');
-  const contents = root.querySelectorAll('#kvn-content > div');
-
-  tabs.forEach(tab=>{
-    tab.onclick = () => {
-      tabs.forEach(t=>t.classList.remove('active'));
-      contents.forEach(c=>c.style.display='none');
-      tab.classList.add('active');
-      root.querySelector(`[data-content="${tab.dataset.tab}"]`).style.display = 'block';
-    }
-  });
-
-  // --- Application State ---
-  let accessCode = localStorage.getItem('kvnAccessCode') || "";
-  let accessLevel = "none"; // "free", "premium"
-  let pluginsUnlocked = {};
-
-  // --- Helper to update session data to Firebase ---
-  async function updateSession(){
-    const userAgent = navigator.userAgent;
-    await db.ref(`sessions/${sessionId}`).set({
-      lastActive: Date.now(),
-      userAgent,
-      accessCode: accessCode || null
-    });
-  }
-
-  // --- Ban Screen ---
+  // --- Ban UI ---
   async function showBanScreen(banData){
     root.innerHTML = `
       <div style="padding: 30px; text-align:center; color:#ff4c4c;">
         <h1>Access Denied</h1>
-        <p>You have been banned from using KVN Tools.</p>
-        <p><strong>Reason:</strong> ${banData.reason || "No reason provided"}</p>
-        <p>If you believe this is a mistake, please join the Discord server:</p>
-        <a href="https://discord.gg/EY9WnVQ8DC" target="_blank" style="color:#5865F2; text-decoration:none;">https://discord.gg/EY9WnVQ8DC</a>
+        <p><strong>Reason:</strong> ${banData.reason || "Unknown"}</p>
+        <a href="https://discord.gg/EY9WnVQ8DC" target="_blank" style="color:#5865F2;">Appeal on Discord</a>
       </div>
     `;
   }
 
-  // --- Access Code Input UI ---
+  // --- Access UI ---
   function renderAccessCodeUI(){
-    const toolsDiv = root.querySelector('[data-content="tools"]');
-    toolsDiv.innerHTML = '';
+    const div = root.querySelector('[data-content="tools"]');
+    div.innerHTML = '';
 
-    const info = create('p', {}, 'Enter your access code below:');
     const input = create('input', {type:'text', placeholder:'Enter access code', value: accessCode});
     const btn = create('button', {}, 'Submit');
-
+    const random = create('button', {style:{marginLeft:'10px'}}, '🎲 Generate');
     const message = create('div', {className:'message'});
 
     btn.onclick = async () => {
       const code = input.value.trim();
-      if(!code){
-        message.textContent = "Please enter a code.";
-        return;
-      }
-      const codeData = await checkAccessCode(code);
-      if(!codeData){
-        message.textContent = "Invalid access code.";
-        return;
-      }
+      const data = await checkAccessCode(code);
+      if(!data){ message.textContent = "Invalid code."; return; }
       accessCode = code;
-      accessLevel = codeData.type || "free";
+      accessLevel = data.type || "free";
       localStorage.setItem('kvnAccessCode', code);
-      message.textContent = `Access code accepted. Level: ${accessLevel}`;
+      message.textContent = "✅ Access granted.";
       await updateSession();
       renderToolsUI();
     };
 
-    toolsDiv.append(info, input, btn, message);
+    random.onclick = () => {
+      const gen = Math.random().toString(36).substring(2, 10).toUpperCase();
+      input.value = gen;
+    };
 
-    if(accessCode){
-      // Auto check if already logged in
-      checkAccessCode(accessCode).then(codeData=>{
-        if(codeData){
-          accessLevel = codeData.type || "free";
-          message.textContent = `Welcome back! Access level: ${accessLevel}`;
-          renderToolsUI();
-        } else {
-          accessLevel = "none";
-          localStorage.removeItem('kvnAccessCode');
-          message.textContent = "Your saved code is invalid.";
-        }
-      });
-    }
+    div.append(create('h3', {}, 'Enter Access Code:'), input, btn, random, message);
   }
 
   // --- Tools UI ---
   function renderToolsUI(){
-    const toolsDiv = root.querySelector('[data-content="tools"]');
-    toolsDiv.innerHTML = '';
+    const div = root.querySelector('[data-content="tools"]');
+    div.innerHTML = '';
 
-    const heading = create('h2', {}, 'Available Tools');
-
-    // Tool list with free and premium split
-    // Free tools (always available)
-    const freeTools = [
-      {name:'Tabset Manager', desc:'Save and reopen tab groups'},
-      {name:'Clipboard Logger', desc:'Limited recent clipboard items'},
-      {name:'Link Vault', desc:'Save and organize links'},
-      {name:'Secure Notes', desc:'One note page with basic lock'},
-      {name:'Text Expander', desc:'Basic typing shortcuts'}
+    const tools = [
+      {name:'Clipboard Logger', desc:'Basic clipboard history', premium:false},
+      {name:'Link Vault', desc:'Save links across tabs', premium:false},
+      {name:'Secure Notes', desc:'Simple locked note pad', premium:false},
+      {name:'DNS Cloak', desc:'Hide DNS activity', premium:true},
+      {name:'Macro Typer', desc:'Type stored responses', premium:true},
     ];
 
-    // Premium tools (locked if accessLevel!="premium")
-    const premiumTools = [
-      {name:'Domain Redirector', desc:'Bypass blocked sites'},
-      {name:'AltDNS Tunneler', desc:'Advanced DNS switching'},
-      {name:'Site Cloak Engine', desc:'Disguised browsing'},
-      {name:'Surveillance Watchdog', desc:'Detect monitoring'},
-      {name:'Script Injector', desc:'Inject custom bypass scripts'},
-      {name:'Autotype Macro Tool', desc:'Auto-type answers and macros'},
-      {name:'Quick Close All', desc:'Emergency close risky tabs'},
-      {name:'Network Bypass Finder', desc:'Find mirrors and proxies'},
-      {name:'Tab Spoof Utility', desc:'Spoof tab info to appear safe'},
-      {name:'Web Snapshot Tool', desc:'Save pages offline'},
-      {name:'Offline Page Loader', desc:'Replay saved snapshots'},
-      {name:'Quick Launch Bar', desc:'Create shortcut button bar'},
-      {name:'Tab Lock Simulator', desc:'Freeze tab with test cover'},
-      {name:'DNS Leak Test Utility', desc:'Check DNS leaks'},
-      {name:'Form Auto-Completer (AI)', desc:'Smart form fills'},
-      {name:'Text Feedback Generator', desc:'AI-generated replies'},
-      {name:'Prompt Notebook', desc:'Save GPT prompts'},
-      {name:'DOM Inspector+', desc:'Inspect/edit blocked sites'}
-    ];
+    div.append(create('h2', {}, 'Tools'));
 
-    toolsDiv.append(heading);
+    tools.forEach(t=>{
+      const locked = t.premium && accessLevel !== "premium";
+      const card = create('div', {style:{marginBottom:'10px', padding:'10px', background:locked?'#3a1f1f':'#2c2c2c', borderRadius:'6px'}},
+        create('h3', {}, t.name),
+        create('p', {}, t.desc),
+        locked ? create('p', {className:'locked'}, '🔒 Premium') : ''
+      );
+      div.appendChild(card);
+    });
 
-    const createToolCard = (tool, locked) => {
-      const card = create('div', {style:{border:'1px solid #555', borderRadius:'8px', padding:'10px', margin:'8px 0', background:locked?'#3a1f1f':'#222'}});
-      const title = create('h3', {}, tool.name);
-      const desc = create('p', {}, tool.desc);
-      card.append(title, desc);
-      if(locked){
-        const lockedLabel = create('p', {className:'locked'}, 'Locked - Premium only');
-        card.append(lockedLabel);
-      }
-      return card;
+    // Reset option
+    const resetBtn = create('button', {}, '🗑️ Reset Session & History');
+    resetBtn.onclick = () => {
+      localStorage.removeItem('kvnAccessCode');
+      localStorage.removeItem('kvnSessionId');
+      location.reload();
     };
-
-    freeTools.forEach(t => toolsDiv.append(createToolCard(t,false)));
-
-    if(accessLevel === "premium"){
-      premiumTools.forEach(t => toolsDiv.append(createToolCard(t,false)));
-    } else {
-      premiumTools.forEach(t => toolsDiv.append(createToolCard(t,true)));
-    }
-
+    div.append(resetBtn);
   }
 
   // --- Plugins UI ---
   function renderPluginsUI(){
-    const pluginsDiv = root.querySelector('[data-content="plugins"]');
-    pluginsDiv.innerHTML = '';
+    const div = root.querySelector('[data-content="plugins"]');
+    div.innerHTML = '';
 
-    const heading = create('h2', {}, 'Plugins');
-    const info = create('p', {}, 'Enter a plugin code to unlock features:');
-    const input = create('input', {type:'text', placeholder:'Enter plugin code'});
-    const btn = create('button', {}, 'Unlock Plugin');
-    const message = create('div', {className:'message'});
+    const input = create('input', {type:'text', placeholder:'Plugin code'});
+    const btn = create('button', {}, 'Unlock');
+    const msg = create('div', {className:'message'});
 
     btn.onclick = async () => {
       const code = input.value.trim();
-      if(!code){
-        message.textContent = 'Please enter a plugin code.';
-        return;
-      }
-      if(pluginsUnlocked[code]){
-        message.textContent = 'Plugin already unlocked.';
-        return;
-      }
-      const pluginData = await checkPluginCode(code);
-      if(!pluginData){
-        message.textContent = 'Invalid plugin code.';
-        return;
-      }
-      pluginsUnlocked[code] = pluginData;
-      message.textContent = `Plugin "${pluginData.name}" unlocked!`;
+      const data = await checkPluginCode(code);
+      if(!data){ msg.textContent = "Invalid plugin."; return; }
+      pluginsUnlocked[code] = data;
+      msg.textContent = `✅ Plugin "${data.name}" unlocked.`;
       input.value = '';
-      // Optionally trigger plugin feature activation here
       renderPluginsUI();
     };
 
-    pluginsDiv.append(heading, info, input, btn, message);
+    div.append(create('h2', {}, 'Plugins'), input, btn, msg);
 
-    if(Object.keys(pluginsUnlocked).length > 0){
-      const ul = create('ul');
-      for(const [code,data] of Object.entries(pluginsUnlocked)){
-        const li = create('li', {}, `${data.name} (Code: ${code})`);
-        ul.appendChild(li);
+    if(Object.keys(pluginsUnlocked).length){
+      const list = create('ul');
+      for(const [k,v] of Object.entries(pluginsUnlocked)){
+        list.append(create('li', {}, `${v.name} (${k})`));
       }
-      pluginsDiv.append(ul);
+      div.append(list);
     }
   }
 
   // --- Settings UI ---
   function renderSettingsUI(){
-    const settingsDiv = root.querySelector('[data-content="settings"]');
-    settingsDiv.innerHTML = '';
+    const div = root.querySelector('[data-content="settings"]');
+    div.innerHTML = '';
 
-    const heading = create('h2', {}, 'Settings');
-    const themeLabel = create('label', {}, 'Toggle Dark/Light Theme: ');
-    const themeToggle = create('input', {type:'checkbox'});
-    const savedTheme = localStorage.getItem('kvnTheme') || 'dark';
-    root.setAttribute('data-theme', savedTheme);
-    themeToggle.checked = (savedTheme === 'light');
+    const toggle = create('input', {type:'checkbox'});
+    const label = create('label', {}, ' Toggle Dark/Light Theme');
+    label.prepend(toggle);
 
-    themeToggle.onchange = () => {
-      if(themeToggle.checked){
-        root.setAttribute('data-theme', 'light');
-        localStorage.setItem('kvnTheme', 'light');
-      } else {
-        root.setAttribute('data-theme', 'dark');
-        localStorage.setItem('kvnTheme', 'dark');
-      }
+    const saved = localStorage.getItem('kvnTheme') || 'dark';
+    root.setAttribute('data-theme', saved);
+    toggle.checked = saved === 'light';
+
+    toggle.onchange = () => {
+      const theme = toggle.checked ? 'light' : 'dark';
+      root.setAttribute('data-theme', theme);
+      localStorage.setItem('kvnTheme', theme);
     };
 
-    themeLabel.appendChild(themeToggle);
-    settingsDiv.append(heading, themeLabel);
+    div.append(create('h2', {}, 'Settings'), label);
   }
 
-  // --- Main Init Flow ---
+  // --- Main Init ---
   async function main(){
     const userAgent = navigator.userAgent;
-
-    // Check ban first
     const banData = await checkBan(sessionId);
-    if(banData){
-      await showBanScreen(banData);
-      return;
-    }
+    if(banData){ await showBanScreen(banData); return; }
 
-    // Check saved access code
     if(accessCode){
       const codeData = await checkAccessCode(accessCode);
-      if(!codeData){
-        accessCode = "";
-        localStorage.removeItem('kvnAccessCode');
-        accessLevel = "none";
-      } else {
-        accessLevel = codeData.type || "free";
-      }
+      if(codeData){ accessLevel = codeData.type; }
+      else { accessLevel = "none"; localStorage.removeItem('kvnAccessCode'); }
     }
 
-    // Send session info to Discord webhook
     await sendSessionToDiscord(sessionId, userAgent, accessCode);
-
-    // Update session heartbeat every 2 minutes
-    setInterval(updateSession, 120000);
     await updateSession();
+    setInterval(updateSession, 2 * 60 * 1000);
 
-    // Render UI
-    if(accessLevel === "none"){
-      renderAccessCodeUI();
-    } else {
-      renderToolsUI();
-    }
+    if(accessLevel === "none") renderAccessCodeUI();
+    else renderToolsUI();
+
     renderPluginsUI();
     renderSettingsUI();
-
-    // -- DRAGGABLE WINDOW CODE --
-
-    const header = document.getElementById('kvn-window-header');
-    let isDragging = false;
-    let offsetX = 0;
-    let offsetY = 0;
-
-    header.style.cursor = 'grab';
-
-    header.addEventListener('mousedown', e => {
-      isDragging = true;
-      offsetX = e.clientX - root.offsetLeft;
-      offsetY = e.clientY - root.offsetTop;
-      header.style.cursor = 'grabbing';
-      e.preventDefault();
-    });
-
-    window.addEventListener('mousemove', e => {
-      if (!isDragging) return;
-      let left = e.clientX - offsetX;
-      let top = e.clientY - offsetY;
-
-      // Keep inside viewport
-      const winWidth = root.offsetWidth;
-      const winHeight = root.offsetHeight;
-      const docWidth = window.innerWidth;
-      const docHeight = window.innerHeight;
-
-      left = Math.min(Math.max(0, left), docWidth - winWidth);
-      top = Math.min(Math.max(0, top), docHeight - winHeight);
-
-      root.style.left = left + 'px';
-      root.style.top = top + 'px';
-    });
-
-    window.addEventListener('mouseup', () => {
-      if(isDragging){
-        isDragging = false;
-        header.style.cursor = 'grab';
-      }
-    });
   }
 
+  // --- Dragging ---
+  const header = document.getElementById('kvn-window-header');
+  let isDragging = false, offsetX = 0, offsetY = 0;
+  header.addEventListener('mousedown', e => {
+    isDragging = true;
+    offsetX = e.clientX - root.offsetLeft;
+    offsetY = e.clientY - root.offsetTop;
+    header.style.cursor = 'grabbing';
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', e => {
+    if (!isDragging) return;
+    root.style.left = `${e.clientX - offsetX}px`;
+    root.style.top = `${e.clientY - offsetY}px`;
+  });
+  window.addEventListener('mouseup', () => {
+    isDragging = false;
+    header.style.cursor = 'grab';
+  });
+
+  // ✅ GO
   await main();
 
 })();
