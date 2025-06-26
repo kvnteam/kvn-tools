@@ -155,7 +155,7 @@
     height: 28px; background: var(--bg); border-bottom: 1px solid #555;
     display: flex; align-items: center; padding: 0 10px;
     user-select:none;
-    -webkit-app-region: drag;
+    cursor: grab;
   }
   #kvn-window-header .btn {
     width: 12px; height: 12px; border-radius: 50%;
@@ -164,8 +164,8 @@
     cursor: pointer;
   }
   #btn-close { background: var(--btn-close); }
-  #btn-min { background: var(--btn-min); }
-  #btn-max { background: var(--btn-max); }
+  #btn-min { background: var(--btn-min); opacity:0.3; cursor:not-allowed; }
+  #btn-max { background: var(--btn-max); opacity:0.3; cursor:not-allowed; }
   #kvn-tabs {
     display: flex;
     border-bottom: 1px solid #555;
@@ -240,8 +240,8 @@
   root.innerHTML = `
     <div id="kvn-window-header">
       <div id="btn-close" class="btn" title="Close"></div>
-      <div id="btn-min" class="btn" title="Minimize" style="opacity:0.3; cursor: not-allowed;"></div>
-      <div id="btn-max" class="btn" title="Maximize" style="opacity:0.3; cursor: not-allowed;"></div>
+      <div id="btn-min" class="btn" title="Minimize"></div>
+      <div id="btn-max" class="btn" title="Maximize"></div>
     </div>
     <div id="kvn-tabs">
       <button data-tab="tools" class="active">Tools</button>
@@ -446,6 +446,7 @@
       message.textContent = `Plugin "${pluginData.name}" unlocked!`;
       input.value = '';
       // Optionally trigger plugin feature activation here
+      renderPluginsUI();
     };
 
     pluginsDiv.append(heading, info, input, btn, message);
@@ -487,7 +488,6 @@
   }
 
   // --- Main Init Flow ---
-
   async function main(){
     const userAgent = navigator.userAgent;
 
@@ -525,6 +525,48 @@
     }
     renderPluginsUI();
     renderSettingsUI();
+
+    // -- DRAGGABLE WINDOW CODE --
+
+    const header = document.getElementById('kvn-window-header');
+    let isDragging = false;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    header.style.cursor = 'grab';
+
+    header.addEventListener('mousedown', e => {
+      isDragging = true;
+      offsetX = e.clientX - root.offsetLeft;
+      offsetY = e.clientY - root.offsetTop;
+      header.style.cursor = 'grabbing';
+      e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', e => {
+      if (!isDragging) return;
+      let left = e.clientX - offsetX;
+      let top = e.clientY - offsetY;
+
+      // Keep inside viewport
+      const winWidth = root.offsetWidth;
+      const winHeight = root.offsetHeight;
+      const docWidth = window.innerWidth;
+      const docHeight = window.innerHeight;
+
+      left = Math.min(Math.max(0, left), docWidth - winWidth);
+      top = Math.min(Math.max(0, top), docHeight - winHeight);
+
+      root.style.left = left + 'px';
+      root.style.top = top + 'px';
+    });
+
+    window.addEventListener('mouseup', () => {
+      if(isDragging){
+        isDragging = false;
+        header.style.cursor = 'grab';
+      }
+    });
   }
 
   await main();
